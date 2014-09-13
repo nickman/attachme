@@ -25,6 +25,8 @@
 package com.heliosapm.attachme;
 
 import java.io.File;
+import java.io.OutputStreamWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -264,7 +266,19 @@ public class VirtualMachine extends BaseWrappedClass {
 	public void loadAgent(String agent, String options) {
 		try {			
 			pushCl();
-			invoke(delegate, null, "loadAgentSS", agent, options);
+			getAgentProperties().setProperty("agent.installer", getClass().getName());			
+			String agentProps = null;
+			StringWriter sw = new StringWriter();			
+			try {				
+				getAgentProperties().store(sw, "Agent Properties");
+				sw.flush();
+				agentProps = sw.toString();
+			} catch (Exception ex) {
+				loge("Failed to serialize agent properties:\n%s", ex, getAgentProperties());
+			} finally {
+				try { sw.close(); } catch (Exception x) { /* No Op */ }
+			}
+			invoke(delegate, null, "loadAgentSS", agent, agentProps);
 		} finally {
 			popCl();
 		}				

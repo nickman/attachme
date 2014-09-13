@@ -24,13 +24,18 @@
  */
 package com.heliosapm.attachme.agent;
 
+import java.io.StringReader;
 import java.lang.instrument.ClassDefinition;
 import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
 import java.lang.instrument.Instrumentation;
 import java.lang.instrument.UnmodifiableClassException;
 import java.lang.management.ManagementFactory;
+import java.security.ProtectionDomain;
+import java.util.Properties;
 import java.util.jar.JarFile;
 
+import javax.management.MBeanRegistration;
 import javax.management.MBeanServer;
 import javax.management.NotificationBroadcasterSupport;
 import javax.management.ObjectName;
@@ -42,12 +47,22 @@ import javax.management.ObjectName;
  * @author Whitehead (nwhitehead AT heliosdev DOT org)
  * <p><b><code>com.heliosapm.attachme.agent.AgentInstrumentation</code></b>
  */
-public class AgentInstrumentation extends NotificationBroadcasterSupport implements AgentInstrumentationMBean {
+public class AgentInstrumentation extends NotificationBroadcasterSupport implements AgentInstrumentationMBean, MBeanRegistration {
 	/** The instrumentation delegate */
 	protected final Instrumentation instrumentation;
+	/** The premain supplied agent properties */
+	protected final Properties agentProperties = new Properties();
+	
+	/** The actual object name this instance was registered with */
+	protected ObjectName objectName = null;
+	/** The MBeanServer this instance was registered in */
+	protected MBeanServer server = null;
 	
 	/** The Agent instrumentation JMX ObjectName */
-	public static final ObjectName AGENT_INSTR_ON; 
+	public static final ObjectName AGENT_INSTR_ON;
+	
+	/** Empty class array const */
+	public static final Class<?>[] EMPTY_CLASS_ARR = {};
 	
 	static {
 		try {
@@ -79,7 +94,18 @@ public class AgentInstrumentation extends NotificationBroadcasterSupport impleme
 			return;
 		}
 		System.out.println("Loading AgentInstrumentation MBean");
-		AgentInstrumentation ai = new AgentInstrumentation(inst);
+		Properties agentProps = new Properties();
+		if(agentArgs!=null) {
+			StringReader sr = new StringReader(agentArgs);
+			try {
+				agentProps.load(sr);
+			} catch (Exception ex) {
+				loge("Failed to read agent properties from agent args:\n%s", ex, agentArgs);
+			} finally {
+				try { sr.close(); } catch (Exception x) {/* No Op */}
+			}
+		}
+		AgentInstrumentation ai = new AgentInstrumentation(inst, agentProps);
 		try {
 			MBeanServer server = ManagementFactory.getPlatformMBeanServer();
 			if(server.isRegistered(AGENT_INSTR_ON)) {
@@ -113,10 +139,59 @@ public class AgentInstrumentation extends NotificationBroadcasterSupport impleme
 	/**
 	 * Creates a new AgentInstrumentation
 	 * @param instrumentation The acquired instrumentation instance
+	 * @param agentProps The premain supplied agent properties
 	 */
-	public AgentInstrumentation(Instrumentation instrumentation) {
+	public AgentInstrumentation(Instrumentation instrumentation, Properties agentProps) {
 		super();
 		this.instrumentation = instrumentation;		
+		if(agentProps!=null) this.agentProperties.putAll(agentProps);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 * @see com.heliosapm.attachme.agent.AgentInstrumentationMBean#getByteCode(java.lang.String, javax.management.ObjectName)
+	 */
+	public byte[] getByteCode(String className, ObjectName classLoader) {
+		ClassLoader cl = null;
+		try {
+			if(server.isInstanceOf(classLoader, ClassLoader.class.getName())) {
+				cl = server.getClassLoader(classLoader);
+			} else {
+				cl = server.getClassLoaderFor(classLoader);
+			}
+			Class<?> clazz = cl.loadClass(className);
+			final String internalName = clazz.getName().replace('.', '/');
+			final byte[][] _bytecode = new byte[1][1];
+			final ClassFileTransformer cft = new ClassFileTransformer() {
+				@Override
+				public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) throws IllegalClassFormatException {
+					if(internalName.equals(className)) {
+						_bytecode[0] = classfileBuffer;
+					}
+					return classfileBuffer;
+				}
+			};
+			try {
+				instrumentation.addTransformer(cft, true);
+				instrumentation.retransformClasses(clazz);
+			} finally {
+				instrumentation.removeTransformer(cft);
+			}
+			return _bytecode[0];
+		} catch (final Exception ex) {
+			RuntimeException rex = new RuntimeException("Failed to get byte code for [" + className + "]");
+			rex.setStackTrace(ex.getStackTrace());
+			throw rex;
+		}
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 * @see com.heliosapm.attachme.agent.AgentInstrumentationMBean#getAgentProperties()
+	 */
+	@Override
+	public Properties getAgentProperties() {
+		return agentProperties;
 	}
 	
 //	/**
@@ -223,7 +298,6 @@ public class AgentInstrumentation extends NotificationBroadcasterSupport impleme
 		instrumentation.redefineClasses(definitions);
 	}
 
-
 	/**
 	 * {@inheritDoc}
 	 * @see java.lang.instrument.Instrumentation#isModifiableClass(java.lang.Class)
@@ -240,7 +314,7 @@ public class AgentInstrumentation extends NotificationBroadcasterSupport impleme
 	 */
 	@Override
 	public Class<?>[] getAllLoadedClasses() {
-		return instrumentation.getAllLoadedClasses();
+		return EMPTY_CLASS_ARR; // we don't want to do this here.
 	}
 
 
@@ -250,7 +324,7 @@ public class AgentInstrumentation extends NotificationBroadcasterSupport impleme
 	 */
 	@Override
 	public Class<?>[] getInitiatedClasses(ClassLoader loader) {
-		return instrumentation.getInitiatedClasses(loader);
+		return EMPTY_CLASS_ARR; // we don't want to do this here.
 	}
 
 
@@ -302,5 +376,73 @@ public class AgentInstrumentation extends NotificationBroadcasterSupport impleme
 	public void setNativeMethodPrefix(ClassFileTransformer transformer, String prefix) {
 		instrumentation.setNativeMethodPrefix(transformer, prefix);
 	}
+
+	/**
+	 * {@inheritDoc}
+	 * @see javax.management.MBeanRegistration#preRegister(javax.management.MBeanServer, javax.management.ObjectName)
+	 */
+	@Override
+	public ObjectName preRegister(MBeanServer server, ObjectName name) throws Exception {
+		this.server = server;
+		this.objectName = name;
+		return name;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * @see javax.management.MBeanRegistration#postRegister(java.lang.Boolean)
+	 */
+	@Override
+	public void postRegister(Boolean registrationDone) {
+		/* No Op */
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * @see javax.management.MBeanRegistration#preDeregister()
+	 */
+	@Override
+	public void preDeregister() throws Exception {
+		/* No Op */
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * @see javax.management.MBeanRegistration#postDeregister()
+	 */
+	@Override
+	public void postDeregister() {
+		/* No Op */
+	}
+	
+	/**
+	 * Simple out formatted logger
+	 * @param fmt The format of the message
+	 * @param args The message arguments
+	 */
+	public static void log(String fmt, Object...args) {
+		System.out.println(String.format(fmt, args));
+	}
+	
+	/**
+	 * Simple err formatted logger
+	 * @param fmt The format of the message
+	 * @param args The message arguments
+	 */
+	public static void loge(String fmt, Object...args) {
+		System.err.println(String.format(fmt, args));
+	}
+	
+	/**
+	 * Simple err formatted logger
+	 * @param fmt The format of the message
+	 * @param t The throwable to print stack trace for
+	 * @param args The message arguments
+	 */
+	public static void loge(String fmt, Throwable t, Object...args) {
+		System.err.println(String.format(fmt, args));
+		t.printStackTrace(System.err);
+	}
+	
 
 }

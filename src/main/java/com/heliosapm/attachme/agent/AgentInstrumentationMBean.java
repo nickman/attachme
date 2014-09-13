@@ -25,6 +25,9 @@
 package com.heliosapm.attachme.agent;
 
 import java.lang.instrument.Instrumentation;
+import java.util.Properties;
+
+import javax.management.ObjectName;
 
 /**
  * <p>Title: AgentInstrumentationMBean</p>
@@ -41,10 +44,19 @@ public interface AgentInstrumentationMBean extends Instrumentation {
 	 */
 	public Instrumentation getInstrumentation();
 	
-//	/**
-//	 * Returns the byte code for the passed class
-//	 * @param clazz The class to get the byte code for
-//	 * @return the class bytecode or null if not found.
-//	 */
-//	public byte[] getByteCode(Class<?> clazz);	
+	/**
+	 * Returns the byte code for the passed class
+	 * @param className The name of the class to get the byte code for
+	 * @param classLoader The classloader where the class can be found.
+	 * If the referenced bean itself is not a classloader, 
+	 * then the mbean's classloader will be used.
+	 * @return the class bytecode or null if not found.
+	 */
+	public byte[] getByteCode(String className, ObjectName classLoader);	
+	
+	/**
+	 * Returns the agent properties
+	 * @return the agent properties
+	 */
+	public Properties getAgentProperties();
 }

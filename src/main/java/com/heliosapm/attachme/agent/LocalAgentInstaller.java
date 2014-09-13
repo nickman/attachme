@@ -139,7 +139,7 @@ public class LocalAgentInstaller  {
 					return (notification instanceof MBeanServerNotification) && notification.getType().equals(MBeanServerNotification.REGISTRATION_NOTIFICATION);
 				}
 			}, null);
-			vm.loadAgent(fileName);
+			vm.loadAgent(fileName, ""); // FIXME: pass the id of the MBeanServer to register with. Null means platform.
 			if(!latch.await(timeout, TimeUnit.MILLISECONDS)) {
 				throw new Exception("Timed out after waiting [" + timeout + "] ms. for AgentInstrumentation MBean Deployment");
 			}
