@@ -3,20 +3,31 @@
  */
 package com.heliosapm.attachme.jar;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
+import java.io.Serializable;
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.lang.instrument.Instrumentation;
 import java.lang.management.ManagementFactory;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.security.ProtectionDomain;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
@@ -24,8 +35,7 @@ import java.util.zip.ZipEntry;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import com.heliosapm.attachme.agent.AgentInstrumentation;
-import com.heliosapm.attachme.agent.AgentInstrumentationMBean;
+import com.heliosapm.attachme.agent.LocalAgentInstaller;
 
 /**
  * <p>Title: JarBuilder</p>
@@ -41,33 +51,95 @@ public class JarBuilder {
 	/** Additional resources to add to the jar, keyed by the jar archive path */
 	private final Map<String, byte[]> resources = new LinkedHashMap<String, byte[]>();
 	/** Classes to add to the jar */
-	private final Set<Class<?>> jarClasses = new LinkedHashSet<Class<?>>();
+	private final Map<Class<?>, Boolean> jarClasses = new LinkedHashMap<Class<?>, Boolean>();
+	
+	/** A reference to the JVM's {@link java.lang.instrument.Instrumentation} */
+	private static final AtomicReference<Instrumentation> instrumentation = new AtomicReference<Instrumentation>(null); 
+	
+	/** The compression level which defaults to BEST_SPEED */
+	private final int compressionLevel;
 	
 	
 	/** The platform mbean server */
 	public static final MBeanServer PLATFORM_MBEANSERVER = ManagementFactory.getPlatformMBeanServer();
 	
-	/** A set of all primitive classes */
-	@SuppressWarnings("unchecked")
-	public static final Set<Class<?>> PRIMITIVES = Collections.unmodifiableSet(new HashSet<Class<?>>(Arrays.asList(
-			byte.class, boolean.class, char.class, short.class, int.class, float.class, long.class, double.class  
-	)));
-	
 	
 	/**
-	 * Creates and returns a new JarBuilder instance
+	 * Creates and returns a new JarBuilder instance that will use the specified compression level
+	 * @param compressionLevel the compressionLevel to set. Must be between 0 and 9 inclusive.
 	 * @return a new JarBuilder instance
 	 */
-	public static JarBuilder newInstance() {		
-		return new JarBuilder();
+	public static JarBuilder newInstance(int compressionLevel) {	
+		if(compressionLevel < 0 || compressionLevel > 9) throw new IllegalArgumentException("Invalid compression level [" + compressionLevel + "]");
+		return new JarBuilder(compressionLevel);
 	}
+	
+	/**
+	 * Creates and returns a new JarBuilder instance that will use the default compression level of 1
+	 * @return a new JarBuilder instance
+	 */
+	public static JarBuilder newInstance() {	
+		return new JarBuilder(1);
+	}
+	
 	
 	/**
 	 * Creates a new JarBuilder
 	 */
-	private JarBuilder() {
-		
+	private JarBuilder(int compressionLevel) {
+		this.compressionLevel = compressionLevel;
 	}
+	
+	/**
+	 * Writes the built jar to the passed file. 
+	 * @param deleteExisting If true, will delete the existing file before writing it again. 
+	 * Otherwise throws a RuntimeException if the file exists.
+	 * @param file The file to write jar to
+	 * @return the JarFile representation of the written file
+	 */
+	public JarFile writeJar(final boolean deleteExisting, final File file) {
+		if(file==null) throw new IllegalArgumentException("The passed file was null");
+		if(file.exists()) {
+			if(deleteExisting) {
+				if(!file.delete()) {
+					throw new RuntimeException("Failed to delete existing file [" + file + "]");
+				}
+			}
+			else throw new IllegalStateException("The passed file [" + file + "] already exists");
+		}
+		
+		try {
+			if(!file.createNewFile()) {
+				throw new Exception("Create file [" + file + "] returned false");
+			}
+		} catch (Exception ex) {
+			throw new RuntimeException("Failed to create new file for [" + file + "]", ex);
+		}
+		FileOutputStream fos = null;
+		BufferedOutputStream bos = null;
+		try {
+			fos = new FileOutputStream(file);
+			bos = new BufferedOutputStream(fos);
+			writeJar(bos);
+		} catch (Exception ex) {
+			throw new RuntimeException("Failed to stream out jar to [" + file + "]", ex);
+		} finally {
+			if(fos!=null) {
+				try { fos.flush(); } catch (Exception x) {/* No Op */}
+				try { fos.close(); } catch (Exception x) {/* No Op */}
+			}
+			if(bos!=null) {
+				try { bos.flush(); } catch (Exception x) {/* No Op */}
+				try { bos.close(); } catch (Exception x) {/* No Op */}
+			}			
+		}
+		try {
+			return new JarFile(file);
+		} catch (Exception e) {
+			throw new RuntimeException("Failed to create JarFile for file [" + file + "]", e);
+		}
+	}
+
 	
 	/**
 	 * Writes the built jar to the passed output stream
@@ -85,12 +157,12 @@ public class JarBuilder {
 			ByteArrayInputStream bais = new ByteArrayInputStream(manifest.toString().getBytes());
 			Manifest mf = new Manifest(bais);
 			jos = new JarOutputStream(os, mf);
+			jos.setLevel(compressionLevel);
 			TreeMap<String, byte[]> outItems = new TreeMap<String, byte[]>(resources);
-			for(Class<?> clazz : jarClasses) {
-				outItems.put(clazz.getName().replace('.', '/') + ".class", getClassBytes(clazz));
+			for(Map.Entry<Class<?>, Boolean> entry: jarClasses.entrySet()) {
+				outItems.put(entry.getKey().getName().replace('.', '/') + ".class", getClassBytes(entry.getValue(), entry.getKey()));
 			}
-			
-			addClassesToJar(jos, AgentInstrumentation.class, AgentInstrumentationMBean.class);
+			addItemsToJar(jos, outItems);
 			jos.flush();
 			jos.close();
 			jos = null;
@@ -135,14 +207,20 @@ public class JarBuilder {
 	
 	/**
 	 * Adds the passed classes to the built jar
+	 * Silently ignores:<ol>
+	 * 	<li>Primitive types</li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 * </ol>
+	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param classes The classes to add
 	 * @return this JarBuilder
 	 */
-	public JarBuilder addClasses(final Class<?>...classes) {
+	public JarBuilder addClasses(final boolean transformed, final Class<?>...classes) {
 		if(classes!=null) {
 			for(Class<?> clazz: classes) {
+				if(clazz.isPrimitive() || clazz.getPackage().getName().startsWith("java.")) continue;
 				if(clazz!=null) {
-					jarClasses.add(clazz);
+					jarClasses.put(clazz, transformed);
 				}
 			}
 		}
@@ -150,16 +228,32 @@ public class JarBuilder {
 	}
 	
 	/**
-	 * Resolves the passed class names and adds the resolved classes to the built jar. Silently ignores:<ol>
+	 * Adds the passed classes to the built jar in their original (non-transformed) bytecode state
+	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
 	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
 	 * </ol>
+	 * @param classes The classes to add
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addClasses(final Class<?>...classes) {
+		return addClasses(false, classes);
+	}
+	
+	
+	/**
+	 * Resolves the passed class names and adds the resolved classes to the built jar. 
+	 * Silently ignores:<ol>
+	 * 	<li>Primitive types</li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 * </ol>
+	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param cl The optional class loader to use. If supplied, the classloader will be used to resolve the class names. Ignored if null.
 	 * @param classNames The classnames to resolve
 	 * @return this JarBuilder
 	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
 	 */
-	public JarBuilder addClasses(final ClassLoader cl, final String...classNames) throws ClassNotFoundException {
+	public JarBuilder addClasses(final boolean transformed, final ClassLoader cl, final String...classNames) throws ClassNotFoundException {
 		if(classNames!=null) {
 			final Set<Class<?>> classesToAdd = new LinkedHashSet<Class<?>>();
 			for(String className: classNames) {
@@ -170,17 +264,53 @@ public class JarBuilder {
 					} else {
 						clazz = Class.forName(className.trim(), false, cl);						
 					}
-					if(PRIMITIVES.contains(clazz) || clazz.getPackage().getName().startsWith("java.")) continue;
+					if(clazz.isPrimitive() || clazz.getPackage().getName().startsWith("java.")) continue;
 					classesToAdd.add(clazz);
 				}
 			}
-			jarClasses.addAll(classesToAdd);
+			for(Class<?> clazz: classesToAdd) {
+				jarClasses.put(clazz, transformed);
+			}			
 		}
 		return this;
 	}
 	
 	/**
-	 * Resolves the passed class names and adds the resolved classes to the built jar. Silently ignores:<ol>
+	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state. 
+	 * Silently ignores:<ol>
+	 * 	<li>Primitive types</li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 * </ol>
+	 * @param cl The optional class loader to use. If supplied, the classloader will be used to resolve the class names. Ignored if null.
+	 * @param classNames The classnames to resolve
+	 * @return this JarBuilder
+	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
+	 */
+	public JarBuilder addClasses(final ClassLoader cl, final String...classNames) throws ClassNotFoundException {
+		return addClasses(false, cl, classNames);
+	}
+	
+	/**
+	 * Resolves the passed class names and adds the resolved classes to the built jar. 
+	 * Silently ignores:<ol>
+	 * 	<li>Primitive types</li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 * </ol>
+	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
+	 * @param mbeanServer The optional MBeanServer to resolve the classloader from. If null, will use the platform mbean server
+	 * @param objectName The ObjectName to resolve a classloader to use. The resulting classloader will be used to resolve the class names.
+	 * @param classNames The classnames to resolve
+	 * @return this JarBuilder
+	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
+	 */
+	public JarBuilder addClasses(final boolean transformed, final MBeanServer mbeanServer, final ObjectName objectName, final String...classNames) throws ClassNotFoundException {
+		addClasses(transformed, getClassLoader(mbeanServer, objectName), classNames);
+		return this;
+	}
+	
+	/**
+	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state.
+	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
 	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
 	 * </ol>
@@ -191,12 +321,29 @@ public class JarBuilder {
 	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
 	 */
 	public JarBuilder addClasses(final MBeanServer mbeanServer, final ObjectName objectName, final String...classNames) throws ClassNotFoundException {
-		addClasses(getClassLoader(mbeanServer, objectName), classNames);
+		return addClasses(false, mbeanServer, objectName, classNames);
+	}
+	
+	
+	/**
+	 * Resolves the passed class names and adds the resolved classes to the built jar, resolving the passed ObjectName into a ClassLoader from the platform MBeanServer.
+	 * Silently ignores:<ol>
+	 * 	<li>Primitive types</li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 * </ol>
+	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
+	 * @param objectName The ObjectName to resolve a classloader to use. The resulting classloader will be used to resolve the class names.
+	 * @param classNames The classnames to resolve
+	 * @return this JarBuilder
+	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
+	 */
+	public JarBuilder addClasses(final boolean transformed, final ObjectName objectName, final String...classNames) throws ClassNotFoundException {
+		addClasses(transformed, getClassLoader(PLATFORM_MBEANSERVER, objectName), classNames);
 		return this;
 	}
 	
 	/**
-	 * Resolves the passed class names and adds the resolved classes to the built jar, resolving the passed ObjectName into a ClassLoader from the platform MBeanServer.
+	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state, resolving the passed ObjectName into a ClassLoader from the platform MBeanServer.
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
 	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
@@ -207,13 +354,30 @@ public class JarBuilder {
 	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
 	 */
 	public JarBuilder addClasses(final ObjectName objectName, final String...classNames) throws ClassNotFoundException {
-		addClasses(getClassLoader(PLATFORM_MBEANSERVER, objectName), classNames);
-		return this;
+		return addClasses(false, objectName, classNames);
 	}
 	
 	
+	
 	/**
-	 * Resolves the passed class names and adds the resolved classes to the built jar. Silently ignores:<ol>
+	 * Resolves the passed class names and adds the resolved classes to the built jar. 
+	 * Silently ignores:<ol>
+	 * 	<li>Primitive types</li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 * </ol>
+	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
+	 * @param classNames The classnames to resolve
+	 * @return this JarBuilder
+	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
+	 */
+	public JarBuilder addClasses(final boolean transformed, final String...classNames) throws ClassNotFoundException {
+		addClasses(transformed, (ClassLoader)null, classNames);
+		return this;
+	}
+	
+	/**
+	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state. 
+	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
 	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
 	 * </ol>
@@ -222,32 +386,220 @@ public class JarBuilder {
 	 * @throws ClassNotFoundException thrown if a classname cannot be resolved. If this occurs, no classes will be added.
 	 */
 	public JarBuilder addClasses(final String...classNames) throws ClassNotFoundException {
-		addClasses((ClassLoader)null, classNames);
+		return addClasses(false, classNames);
+	}
+	
+	
+	/**
+	 * Returns the compression level
+	 * @return the compressionLevel
+	 */
+	public int getCompressionLevel() {
+		return compressionLevel;
+	}
+
+
+	
+	/**
+	 * Adds a resource to be written to the jar
+	 * @param name The name of the resource. Should be a <b><code>/</code></b> delimeted path.
+	 * @param resource The resource in byte array form
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final String name, final byte[] resource) {
+		if(name==null || name.trim().isEmpty()) throw new IllegalArgumentException("Resource name was null or empty");
+		if(resource==null || resource.length==0) throw new IllegalArgumentException("Resource was null or empty");
+		resources.put(name.trim(), resource);
 		return this;
 	}
+	
+	/**
+	 * Adds a resource to be written to the jar
+	 * @param resource The resource in byte array form
+	 * @param names The path of the resource which will be build by concatenating all the passed values with a <b><code>/</code></b> character 
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final byte[] resource, final String...names) {
+		if(resource==null || resource.length==0) throw new IllegalArgumentException("Resource was null or empty");
+		if(names==null || names.length==0) throw new IllegalArgumentException("Resource names was null or empty");
+		String name = buildPath(names);
+		resources.put(name, resource);
+		return this;
+	}
+
+	/**
+	 * Adds a serializable object as a resource to be written to the jar
+	 * @param resource The serializable resource to write
+	 * @param names The path of the resource which will be build by concatenating all the passed values with a <b><code>/</code></b> character
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final Serializable resource, final String...names) {
+		return addResource(buildPath(names), resource);
+	}
+	
+	/**
+	 * Adds a serializable object as a resource to be written to the jar
+	 * @param name The path of the resource
+	 * @param resource The serializable resource to write
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final String name, final Serializable resource) {
+		if(name==null || name.trim().isEmpty()) throw new IllegalArgumentException("Resource name was null or empty");	
+		if(resource==null) throw new IllegalArgumentException("Resource was null");
+		ByteArrayOutputStream baos = null;
+		ObjectOutputStream oos = null;
+		try {
+			baos = new ByteArrayOutputStream(256);
+			oos = new ObjectOutputStream(baos);
+			oos.writeObject(resource);
+			oos.flush();
+			baos.flush();
+			resources.put(name, baos.toByteArray());
+		} catch (Exception ex) {
+			throw new RuntimeException("Failed to write the serializable to a byte stream", ex);
+		} finally {
+			if(baos!=null) try { baos.close(); } catch (Exception x) {/* No Op */}
+		}		
+		return this;
+	}
+	
+	/**
+	 * Adds the stream content of a URL resource as a resource  to be written to the jar
+	 * @param name The path of the resource
+	 * @param resource The URL of the resource to read from
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final String name, final URL resource) {
+		if(name==null || name.trim().isEmpty()) throw new IllegalArgumentException("Resource name was null or empty");	
+		if(resource==null) throw new IllegalArgumentException("URL resource was null");		
+		ByteArrayOutputStream baos = null;
+		InputStream is = null;
+		BufferedInputStream bis = null;
+		
+		try {
+			is = resource.openStream();
+			int available = is.available();
+			if(available>1) {
+				baos = new ByteArrayOutputStream(available);
+			} else {
+				baos = new ByteArrayOutputStream(1024);
+			}
+			bis = new BufferedInputStream(is);
+			byte[] buff = new byte[1024];
+			int bytesRead = -1;
+			while((bytesRead = bis.read(buff))!=-1) {
+				baos.write(buff, 0, bytesRead);
+			}
+			baos.flush();
+			resources.put(name, baos.toByteArray());
+		} catch (Exception ex) {
+			throw new RuntimeException("Failed to write the serializable to a byte stream", ex);
+		} finally {
+			if(baos!=null) try { baos.close(); } catch (Exception x) {/* No Op */}
+			if(bis!=null) try { bis.close(); } catch (Exception x) {/* No Op */}
+			if(is!=null) try { is.close(); } catch (Exception x) {/* No Op */}
+		}		
+		
+		return this;
+	}
+	
+	/**
+	 * Adds the stream content of a URL resource as a resource  to be written to the jar
+	 * @param resource The URL of the resource to read from
+	 * @param names The path of the resource which will be build by concatenating all the passed values with a <b><code>/</code></b> character
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final URL resource, final String...names) {
+		return addResource(buildPath(names), resource);		
+	}
+	
+	/**
+	 * Adds the stream content of a file resource as a resource  to be written to the jar
+	 * @param name The path of the resource
+	 * @param resource The file to read from
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final String name, final File resource) {
+		if(name==null || name.trim().isEmpty()) throw new IllegalArgumentException("Resource name was null or empty");	
+		if(resource==null) throw new IllegalArgumentException("File resource was null");
+		if(!resource.canRead()) throw new IllegalArgumentException("Cannot read the file [" + resource + "]");
+		URL url = null;
+		try {
+			url = resource.getAbsoluteFile().toURI().toURL();
+		} catch (MalformedURLException mue) {
+			throw new RuntimeException("Unexpected error converting file name [" + resource.getAbsolutePath() + "] to a URL", mue);
+		}
+		return addResource(name, url);
+	}
+	
+	/**
+	 * Adds the stream content of a File resource as a resource  to be written to the jar
+	 * @param resource The file to read from
+	 * @param names The path of the resource which will be build by concatenating all the passed values with a <b><code>/</code></b> character
+	 * @return this JarBuilder
+	 */
+	public JarBuilder addResource(final File resource, final String...names) {
+		return addResource(buildPath(names), resource);		
+	}
+	
+	
+	
+	
 
 
 	/**
 	 * Writes the passed classes to the passed JarOutputStream
 	 * @param jos the JarOutputStream
-	 * @param clazzes The classes to write
+	 * @param items The map of items to write
 	 * @throws IOException on an IOException
 	 */
-	protected static void addClassesToJar(JarOutputStream jos, Class<?>...clazzes) throws IOException {
-		for(Class<?> clazz: clazzes) {
-			jos.putNextEntry(new ZipEntry(clazz.getName().replace('.', '/') + ".class"));
-			jos.write(getClassBytes(clazz));
+	protected static void addItemsToJar(final JarOutputStream jos, final TreeMap<String, byte[]> items) throws IOException {
+		for(Map.Entry<String, byte[]> entry: items.entrySet()) {
+			jos.putNextEntry(new ZipEntry(entry.getKey()));
+			jos.write(entry.getValue());
 			jos.flush();
 			jos.closeEntry();
 		}
 	}
 	
 	/**
+	 * Builds a jar path from the passed names
+	 * @param names The names which will be concatenated with a <b><code>/</code></b> character
+	 * @return the built name
+	 */
+	public static String buildPath(final String...names) {
+		if(names==null || names.length==0) throw new IllegalArgumentException("Resource names was null or empty");
+		StringBuilder b = new StringBuilder();		
+		for(String s: names) {
+			if(s==null || s.trim().isEmpty()) continue;
+			b.append(s).append("/");
+		}
+		if(b.length()==0) throw new IllegalArgumentException("Resource name concat was null or empty");
+		return b.deleteCharAt(b.length()-1).toString();		
+	}
+	
+	
+	/**
 	 * Returns the bytecode bytes for the passed class
+	 * @param transformed If true, will acquire the byte code from java lang Instrumentation so that the transformed byte code will be saved to the jar
 	 * @param clazz The class to get the bytecode for
 	 * @return a byte array of bytecode for the passed class
 	 */
-	public static byte[] getClassBytes(Class<?> clazz) {
+	public static byte[] getClassBytes(final boolean transformed, final Class<?> clazz) {
+		if(transformed) {
+			final byte[][] byteCode = new byte[1][1];
+			final ClassFileTransformer byteCodeGrabber = byteCodeGetter(clazz, byteCode);
+			final Instrumentation instr = getInstrumentation();
+			try {
+				instr.addTransformer(byteCodeGrabber, true);
+				instr.retransformClasses(clazz);
+			} catch (Exception ex) {
+				throw new RuntimeException("Failed to get transformed bytecode for class [" + clazz.getName() + "]", ex);
+			} finally {
+				instr.removeTransformer(byteCodeGrabber);
+			}
+			return byteCode[0];
+		}
 		InputStream is = null;
 		try {
 			is = clazz.getClassLoader().getResourceAsStream(clazz.getName().replace('.', '/') + ".class");
@@ -265,7 +617,46 @@ public class JarBuilder {
 			if(is!=null) { try { is.close(); } catch (Exception e) {/* No Op */} }
 		}
 	}
+	
+	/**
+	 * Returns a class byte code capturing ClassFileTransformer for the passed class
+	 * @param clazz The class to get the byte code for
+	 * @param byteCode A 2D byte array that the bytecode will be inserted into.
+	 * @return the byte code capturing ClassFileTransformer
+	 */
+	private static ClassFileTransformer byteCodeGetter(final Class<?> clazz, final byte[][] byteCode) {		
+		return new ClassFileTransformer() {
+			final String internalFormClassName = clazz.getName().replace('.', '/');
+			
+			/**
+			 * {@inheritDoc}
+			 * @see java.lang.instrument.ClassFileTransformer#transform(java.lang.ClassLoader, java.lang.String, java.lang.Class, java.security.ProtectionDomain, byte[])
+			 */
+			@Override
+			public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) throws IllegalClassFormatException {
+				if(internalFormClassName.equals(className)) {
+					byteCode[0] = classfileBuffer;
+				}
+				return classfileBuffer;
+			}
+		};
+	}
 
+	/**
+	 * Acquires the JVM's {@link java.lang.instrument.Instrumentation} instance
+	 * @return the Instrumentation instance
+	 */
+	private static Instrumentation getInstrumentation() {
+		if(instrumentation.get()==null) {
+			synchronized(instrumentation) {
+				if(instrumentation.get()==null) {
+					final Instrumentation instr = LocalAgentInstaller.getInstrumentation();
+					instrumentation.set(instr);
+				}
+			}
+		}
+		return instrumentation.get();
+	}
 	
 	
 	/**
