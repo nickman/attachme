@@ -27,7 +27,9 @@ package com.heliosapm.attachme.jar;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -69,6 +71,41 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 	private final Map<File, Integer> pendingFiles = new ConcurrentHashMap<File, Integer>();
 	/** The current pending ids */
 	private final Map<Integer, File> pendingIds = new ConcurrentHashMap<Integer, File>();
+	/** A set of delete on exit files which will be converted to pending files if the delete fails */
+	private final Set<File> deleteOnExitFiles = new CopyOnWriteArraySet<File>();
+	/** The shutdown hook to execute deleteOnExitFiles and register as pending if they fail */
+	private final Thread shutdownHook = new Thread() {
+		public void run() {
+			if(!deleteOnExitFiles.isEmpty()) {
+				log("DeleteOnExit Shutdown Hook Running for [%s] files", deleteOnExitFiles.size());
+				int deleted = 0;
+				int notfound = 0;
+				int pended = 0;
+				int errors = 0;
+				for(final File file: deleteOnExitFiles) {
+					try {
+						if(!file.exists()) {
+							notfound++;
+							continue;
+						}
+						if(!file.delete()) {
+							addPendingFile(file);
+							pended++;
+						} else {
+							deleted++;
+						}
+					} catch (Exception ex) {
+						errors++;
+						loge("Failed to delete or register delete on exit file [%s]. Stack trace follows...");
+						ex.printStackTrace(System.err);
+					}
+				}
+				log("DeleteOnExit Shutdown Hook Complete. Deleted: %s, Not Found: %s, Pending: %s, Errors: %s", deleted, notfound, pended, errors);
+			} else {
+				log("DeleteOnExit Shutdown Hook: No files");
+			}
+		}
+	};
 	
 	/** The relative node name where we'll store pending deletes */
 	public static final String PENDING_NODE = "pending-deletes";
@@ -149,6 +186,8 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 			Preferences p = pendingPrefs.node(key);
 			p.put(FILE_NAME_KEY, pendingFile.getAbsolutePath());
 			p.putInt(FILE_ID_KEY, id);
+			p.flush();
+			classPrefs.sync();
 			log("Added Pending File. Re-read file name: [%s]", p.get(FILE_NAME_KEY, "<error>"));
 			pendingFiles.put(pendingFile, id);
 			pendingIds.put(id, pendingFile);
@@ -173,6 +212,8 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 		} catch (BackingStoreException e) {
 			throw new RuntimeException("Failed to get pending node from Prefs", e);
 		}
+		Runtime.getRuntime().addShutdownHook(shutdownHook);
+		log("Registered DeleteOnExit ShutdownHook");
 		scheduler = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {			
 			@Override
 			public Thread newThread(Runnable r) {
@@ -181,7 +222,7 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 				return t;
 			}
 		});
-		scheduler.scheduleAtFixedRate(this, 10, 10, TimeUnit.SECONDS);
+		scheduler.scheduleAtFixedRate(this, 10, 10, TimeUnit.SECONDS);		
 	}
 	
 	/**
@@ -340,6 +381,16 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 //		if(key==null || key.trim().isEmpty()) throw new IllegalArgumentException("The passed key was null or empty");
 //		return new File(key.replace(KEY_DELIM, FILE_DELIM));
 //	}
+	
+	/**
+	 * Adds a file to the delete on exit queue
+	 * @param f The file to delete on exit
+	 */
+	public void deleteOnExit(final File f) {
+		if(f==null || !f.exists()) return;
+		deleteOnExitFiles.add(f);
+		log("Registered DeleteOnExit File [%s]", f);
+	}
 	
 	/**
 	 * Deletes a file, or if it cannot be deleted, adds it to the pending queue.

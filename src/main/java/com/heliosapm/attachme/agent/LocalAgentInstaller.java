@@ -49,6 +49,8 @@ import javax.management.NotificationListener;
 
 import com.heliosapm.attachme.VirtualMachine;
 import com.heliosapm.attachme.VirtualMachineBootstrap;
+import com.heliosapm.attachme.jar.FileCleaner;
+import com.heliosapm.attachme.jar.JarBuilder;
 
 /**
  * <p>Title: LocalAgentInstaller</p>
@@ -190,23 +192,18 @@ public class LocalAgentInstaller  {
 			synchronized(agentJar) {
 				if(agentJar.get()==null) {
 					FileOutputStream fos = null;
-					JarOutputStream jos = null;
+					JarBuilder jb = JarBuilder.newInstance(9);
 					try {
 						File tmpFile = File.createTempFile(LocalAgentInstaller.class.getName(), ".jar");
 						System.out.println("Temp File:" + tmpFile.getAbsolutePath());
-						tmpFile.deleteOnExit();		
-						StringBuilder manifest = new StringBuilder();
-						manifest.append("Manifest-Version: 1.0\nAgent-Class: " + AgentInstrumentation.class.getName() + "\n");
-						manifest.append("Can-Redefine-Classes: true\n");
-						manifest.append("Can-Retransform-Classes: true\n");
-						manifest.append("Premain-Class: " + AgentInstrumentation.class.getName() + "\n");
-						ByteArrayInputStream bais = new ByteArrayInputStream(manifest.toString().getBytes());
-						Manifest mf = new Manifest(bais);
+						FileCleaner.getInstance().deleteOnExit(tmpFile);
+						jb.addManifestEntry("Agent-Class", AgentInstrumentation.class.getName())
+						.addManifestEntry("Can-Redefine-Classes", true)
+						.addManifestEntry("Can-Retransform-Classes", true)
+						.addManifestEntry("Premain-Class", AgentInstrumentation.class.getName());
+						jb.addClasses(AgentInstrumentation.class, AgentInstrumentationMBean.class);
 						fos = new FileOutputStream(tmpFile, false);
-						jos = new JarOutputStream(fos, mf);
-						addClassesToJar(jos, AgentInstrumentation.class, AgentInstrumentationMBean.class);
-						jos.flush();
-						jos.close();
+						jb.writeJar(fos);
 						fos.flush();
 						fos.close();
 						agentJar.set(tmpFile.getAbsolutePath());
@@ -214,7 +211,6 @@ public class LocalAgentInstaller  {
 						throw new RuntimeException("Failed to write Agent installer Jar", e);
 					} finally {
 						if(fos!=null) try { fos.close(); } catch (Exception e) {/* No Op */}
-						if(jos!=null) try { jos.close(); } catch (Exception e) {/* No Op */}
 					}
 
 				}
