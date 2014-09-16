@@ -209,7 +209,7 @@ public class JarBuilder {
 	 * Adds the passed classes to the built jar
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param classes The classes to add
@@ -231,7 +231,7 @@ public class JarBuilder {
 	 * Adds the passed classes to the built jar in their original (non-transformed) bytecode state
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param classes The classes to add
 	 * @return this JarBuilder
@@ -245,7 +245,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar. 
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param cl The optional class loader to use. If supplied, the classloader will be used to resolve the class names. Ignored if null.
@@ -279,7 +279,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state. 
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param cl The optional class loader to use. If supplied, the classloader will be used to resolve the class names. Ignored if null.
 	 * @param classNames The classnames to resolve
@@ -294,7 +294,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar. 
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param mbeanServer The optional MBeanServer to resolve the classloader from. If null, will use the platform mbean server
@@ -312,7 +312,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state.
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param mbeanServer The optional MBeanServer to resolve the classloader from. If null, will use the platform mbean server
 	 * @param objectName The ObjectName to resolve a classloader to use. The resulting classloader will be used to resolve the class names.
@@ -329,7 +329,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar, resolving the passed ObjectName into a ClassLoader from the platform MBeanServer.
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param objectName The ObjectName to resolve a classloader to use. The resulting classloader will be used to resolve the class names.
@@ -346,7 +346,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state, resolving the passed ObjectName into a ClassLoader from the platform MBeanServer.
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param objectName The ObjectName to resolve a classloader to use. The resulting classloader will be used to resolve the class names.
 	 * @param classNames The classnames to resolve
@@ -363,7 +363,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar. 
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param transformed If true, will acquire the class bytecode from the java.lang.Instrument so that the [re-]transformed bytecode is saved to the jar.
 	 * @param classNames The classnames to resolve
@@ -379,7 +379,7 @@ public class JarBuilder {
 	 * Resolves the passed class names and adds the resolved classes to the built jar in their original (non-transformed) bytecode state. 
 	 * Silently ignores:<ol>
 	 * 	<li>Primitive types</li>
-	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b></li>
+	 *  <li>Core classes (i.e. with package names starting with <b><code>java.</code></b>)</li>
 	 * </ol>
 	 * @param classNames The classnames to resolve
 	 * @return this JarBuilder
