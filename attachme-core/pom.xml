@@ -1,39 +1,21 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+	<parent>
+	  <groupId>com.heliosapm.attachme</groupId>
+	  <artifactId>attachme</artifactId>
+	  <version>0.0.1-SNAPSHOT</version>
+	</parent>
+    
     <groupId>com.heliosapm.attachme</groupId>
-    <artifactId>attachme</artifactId>
+    <artifactId>attachme-core</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>Attach-Me</name>
+    <name>Attach-Me :: Core</name>
     <description>A java library to provide a JVM attach wrapper and agent extensions</description>
-    <packaging>pom</packaging>
+    <packaging>jar</packaging>
     <url>https://github.com/nickman/attachme</url>
-    <modules>
-	    <module>attachme-core</module>		
-    </modules>
 	
-	
-    <properties>    	 
-  	<!-- Misc -->
- 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
- 		<compiler-source.version>1.6</compiler-source.version>
- 		<compiler-target.version>1.6</compiler-target.version>
- 		<!-- Dependencies -->
- 		<junit.version>4.11</junit.version>
- 		<jdmk.version>1.0-b02-SNAPSHOT</jdmk.version>
- 		<reflectasm.version>1.10.0</reflectasm.version>
-		<!-- Plugin Versions -->
-		<jar-plugin.version>2.3</jar-plugin.version>
-		<source-plugin.version>2.2</source-plugin.version>
-		<javadoc-plugin.version>2.9</javadoc-plugin.version>
-		<jar-plugin.version>2.4</jar-plugin.version>
-		<eclipse-plugin.version>2.9</eclipse-plugin.version>
-		<surefire.version>2.16</surefire.version>
-		<cobertura.version>2.5.1</cobertura.version>
-		<shade.version>2.1</shade.version>
-    </properties>
 
-  <dependencyManagement>
     <dependencies>
       
 		<!-- ==========================================================
@@ -43,8 +25,6 @@
 		<dependency>
 		    <groupId>junit</groupId>
 		    <artifactId>junit</artifactId>
-		    <version>${junit.version}</version>
-		    <scope>test</scope>
 		</dependency>
 
 		<!-- ==========================================================
@@ -54,7 +34,6 @@
 		<dependency>
 		  <groupId>com.esotericsoftware</groupId>
 		  <artifactId>reflectasm</artifactId>
-		  <version>${reflectasm.version}</version>
 		</dependency>
 
 		<!-- ==========================================================
@@ -63,12 +42,10 @@
 		<dependency>
 		    <groupId>com.sun.jdmk</groupId>
 		    <artifactId>jmx-optional</artifactId>		    
-		    <version>${jdmk.version}</version>
 		</dependency>
 		
 
     </dependencies>
-  </dependencyManagement>  
     
     <build>
         <plugins>
