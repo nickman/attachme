@@ -48,12 +48,11 @@ import java.util.prefs.Preferences;
  * <p>Company: Helios Development Group LLC</p>
  * @author Whitehead (nwhitehead AT heliosdev DOT org)
  * <p><code>com.heliosapm.attachme.jar.FileCleaner</code></p>
- * FIXME: add a node change listener in case changes are made by another JVM
  * FIXME: need a way to lock the prefs node to avoid clashes with other instances of FileCleaner in other VMs
  * TODO: add mbean interface and register 
  */
 
-public class FileCleaner implements Runnable, NodeChangeListener{
+public class FileCleaner implements Runnable {
 	/** The singleton instance */
 	private static volatile FileCleaner instance = null;
 	/** The singleton instance ctor lock */
@@ -139,21 +138,22 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 	/**
 	 * Removes a pending file from cache and the prefs store queue
 	 * @param key The prefs store queue key
+	 * @return true if a file was removed, false otherwise
 	 */
-	private void removePendingFile(final String key) {
+	private boolean removePendingFile(final String key) {
 		if(key==null || key.trim().isEmpty()) throw new IllegalArgumentException("The passed key was null or empty");
 		log("Removing Pending File with ID: [%s]", key);
 		try {
 			final int id = parseKey(key);
 			if(id != -1) {
 				File f = pendingIds.remove(id);
+				if(f==null) return false;
 				f.delete();
-				if(f!=null) {
-					log("Removing Pending File with ID: [%s] and File Name: [%s]", key, f);
-					pendingFiles.remove(f);
-				}
+				log("Removing Pending File with ID: [%s] and File Name: [%s]", key, f);
+				pendingFiles.remove(f);
 				pendingPrefs.node(key).removeNode();
 				pendingPrefs.flush();
+				return true;
 			} else {
 				// try and clean up anyways
 				final String fileName = pendingPrefs.node(key).get(FILE_NAME_KEY, null);
@@ -167,6 +167,7 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 					pendingPrefs.node(key).removeNode();
 				}
 			}
+			return false;
 		} catch (Exception ex) {
 			throw new RuntimeException("Failed to remove pending file with key [" + key + "]", ex);
 		}
@@ -265,18 +266,29 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 	}
 	
 	public static void main(String args[]) {
+		createTestDir();
 		try {
 			log("FileCleaner Test");
 			FileCleaner fc = getInstance();
 
 			fc.deleteFile(new File("/etc/hosts"));
 			fc.deleteFile(new File("/tmp/d.txt"));
+			fc.deleteFile(new File("/tmp/newDir.0"));
 			Thread.currentThread().join();
 		} catch (Exception ex) {
 			ex.printStackTrace(System.err);
 		}
 	}
 	
+	static void createTestDir() {
+		getInstance().reset();
+		File f = new File(System.getProperty("java.io.tmpdir"));
+		for(int i = 0; i < 10; i++) {
+			f = new File(f, "newDir." + i);
+			f.mkdir();
+		}
+		log("Bottom Dir: [%s], EXISTS: %s", f, f.exists());
+	}
 	/**
 	 * Parses the full prefs key. Returns the id as an int
 	 * Returns -1 unless the parse is successful
@@ -409,12 +421,15 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 		log("Added file to pending queue: [%s]", f.getAbsolutePath());
 	}
 	
+	
 	/**
 	 * Deletes a directory tree
 	 * @param dir The file directory to delete
+	 * @param recursive Recursion indicator
 	 * @return true if successful, false otherwise
 	 */
-	private boolean deleteDir(final File dir) {
+	private boolean deleteDir(final File dir, boolean...recursive) {
+		final boolean recursing = recursive.length>0;
 		if(dir==null) return true;
 		if(!dir.exists()) return true;
 		if(!dir.isDirectory()) {
@@ -422,41 +437,22 @@ public class FileCleaner implements Runnable, NodeChangeListener{
 		}
 		try {
 			for(File f: dir.listFiles()) {
-				if(!deleteDir(f)) return false;
+				if(f.isDirectory()) {
+					deleteDir(f, true);
+//						if(!f.delete()) return false;
+				} else {
+					if(!deleteDir(f, true)) return false;
+				}
 			}
-			return dir.delete();
+			if(!dir.delete()) {
+					if(!recursing) log("Failed to Delete dir tree: [%s]", dir);
+				return false;
+			} else {
+				if(!recursing) log("Deleted dir tree: [%s]", dir);
+				return true;
+			}
 		} catch (Exception ex) {
 			throw new RuntimeException("Failed to delete dir [" + dir.getAbsolutePath() + "]", ex);
-		}		
-	}
-
-	/**
-	 * {@inheritDoc}
-	 * @see java.util.prefs.NodeChangeListener#childAdded(java.util.prefs.NodeChangeEvent)
-	 */
-	@Override
-	public void childAdded(NodeChangeEvent evt) {
-		if(evt != null) {
-			final Preferences parentPrefs = evt.getParent();
-			if(parentPrefs != null && parentPrefs.isUserNode() && parentPrefs.absolutePath().equals(pendingPrefs.absolutePath())) {
-				final Preferences pPref = evt.getChild();
-				if(pPref != null) {
-					
-//					log("Processing external node event: [%s]", )
-				}
-				
-			}
 		}
 	}
-
-	/**
-	 * {@inheritDoc}
-	 * @see java.util.prefs.NodeChangeListener#childRemoved(java.util.prefs.NodeChangeEvent)
-	 */
-	@Override
-	public void childRemoved(NodeChangeEvent evt) {
-		// TODO Auto-generated method stub
-		
-	}
-
 }
