@@ -1,0 +1,30 @@
+
+Services
+==================
+Discovery
+Cascading
+MBean Interceptors
+MBeanServer Interceptors
+Virtual MBeans/MBeanServers
+
+
+
+Add to core
+===================
+JMXConnectors for:
+	* PID based
+	* JVM Desc based 
+	* Local
+	* Proxy  (where an MBeanServerConnection to a remote JVM is registered)
+	
+Beacon:  services for non-deterministic location deployed agents such as might be the case on cloud deploys
+	* Protocols based on Amazon SMS, Google Messaging
+	* Broadcasts presence on startup
+	* Accepts a limited set of commands
+	* Encrypted JSON based commands and responses
+		* Provide basic meta  (ports, ifaces, ip addresses etc.)
+		* Start/Stop JMCXonnector servers
+		* Reverse SSH Tunnels
+		* JDMK Cascade to other JVMs on host or internal network
+		* JDMK Discovery to locate JVMs on internal network
+		* Install agent using JAR from specified URL (http, file, scp)
